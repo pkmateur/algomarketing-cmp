@@ -3,42 +3,35 @@
  * algomarketing.com + hire.algomarketing.com + new.algomarketing.com
  *
  * Cross-subdomain consent sharing via cookieDomain '.algomarketing.com'.
- * Consent Mode v2 integration via google-tag-manager service (onInit/onAccept).
+ * Consent Mode v2 integration via google-tag-manager service.
+ *
+ * v2: Fixed consent restoration for returning visitors.
+ *     onInit now reads existing consent cookie and applies gtag update + klaro-*-accepted events.
  *
  * Repo: https://github.com/pkmateur/algomarketing-cmp
  * Klaro docs: https://klaro.org/docs
  */
 
 var klaroConfig = {
-  /* Klaro version pinning — must match the loaded klaro.js version */
   version: 1,
-
-  /* Element ID for the Klaro container */
   elementID: 'klaro',
 
-  /* Where to store consent — share across subdomains */
   storageMethod: 'cookie',
   cookieName: 'klaro-consent',
   cookieDomain: '.algomarketing.com',
   cookieExpiresAfterDays: 365,
 
-  /* Banner behavior */
-  default: false,            /* Services denied by default */
-  mustConsent: false,        /* Don't force consent — allow "Decline All" */
-  acceptAll: true,           /* Show "Accept All" button */
-  hideDeclineAll: false,     /* Show "Decline All" — required for GDPR compliance */
+  default: false,
+  mustConsent: false,
+  acceptAll: true,
+  hideDeclineAll: false,
   hideLearnMore: false,
-  noticeAsModal: false,      /* Bottom bar, not blocking modal */
+  noticeAsModal: false,
   embedded: false,
   htmlTexts: true,
-
-  /* Group services by purpose (Marketing / Analytics / etc.) */
   groupByPurpose: true,
-
-  /* Disable "Powered by Klaro" link */
   disablePoweredBy: true,
 
-  /* Translations — English only */
   translations: {
     en: {
       privacyPolicyUrl: 'https://algomarketing.com/privacy-policy',
@@ -106,11 +99,6 @@ var klaroConfig = {
 
   /* ============================================================
      SERVICES
-     ============================================================
-     google-tag-manager: required. Initializes gtag default state.
-     google-analytics, google-ads: marketing. Update Consent Mode v2 on accept.
-     linkedin-insight, microsoft-ads, hubspot: marketing. Fire klaro-X-accepted events.
-     youtube: marketing. contextualConsentOnly — placeholder until user opts in.
      ============================================================ */
   services: [
     {
@@ -119,11 +107,14 @@ var klaroConfig = {
       purposes: ['functional'],
       required: true,
       cookies: [],
-      /* Runs once on every page load, before any user interaction.
-         Sets gtag default consent to denied for all marketing/analytics. */
+
+      /* onInit fires on every page load BEFORE any user interaction.
+         CRITICAL FIX v2: Also reads existing consent cookie and applies it via gtag update +
+         klaro-*-accepted events, so returning visitors don't have to re-consent. */
       onInit: `
         window.dataLayer = window.dataLayer || [];
         window.gtag = window.gtag || function(){ dataLayer.push(arguments); };
+
         gtag('consent', 'default', {
           'ad_storage': 'denied',
           'ad_user_data': 'denied',
@@ -135,9 +126,50 @@ var klaroConfig = {
         });
         gtag('set', 'ads_data_redaction', true);
         gtag('set', 'url_passthrough', true);
+
+        /* Restore consent for returning visitors */
+        try {
+          var cookieName = 'klaro-consent';
+          var cookies = document.cookie.split(';');
+          var consentCookie = null;
+          for (var i = 0; i < cookies.length; i++) {
+            var parts = cookies[i].trim().split('=');
+            if (parts[0] === cookieName) {
+              consentCookie = decodeURIComponent(parts[1]);
+              break;
+            }
+          }
+          if (consentCookie) {
+            var savedConsents = JSON.parse(consentCookie);
+
+            /* Apply gtag consent update for Google services */
+            var update = {};
+            if (savedConsents['google-analytics']) {
+              update.analytics_storage = 'granted';
+            }
+            if (savedConsents['google-ads']) {
+              update.ad_storage = 'granted';
+              update.ad_user_data = 'granted';
+              update.ad_personalization = 'granted';
+            }
+            if (Object.keys(update).length > 0) {
+              gtag('consent', 'update', update);
+            }
+
+            /* Fire klaro-*-accepted events for non-Google services */
+            var nonGoogleServices = ['linkedin-insight', 'microsoft-ads', 'hubspot', 'youtube'];
+            for (var j = 0; j < nonGoogleServices.length; j++) {
+              var svc = nonGoogleServices[j];
+              if (savedConsents[svc]) {
+                dataLayer.push({ 'event': 'klaro-' + svc + '-accepted' });
+              }
+            }
+          }
+        } catch (e) {
+          /* Silent fail - if cookie is malformed, banner will show */
+        }
       `,
-      /* Runs when user accepts any service. Push klaro-{service}-accepted
-         events for each consented service so GTM can react via Custom Event triggers. */
+
       onAccept: `
         for (var k in opts.consents) {
           if (opts.consents[k]) {
@@ -162,12 +194,8 @@ var klaroConfig = {
         [/^_ga.*$/, '/', '.algomarketing.com'],
         [/^_gid.*$/, '/', '.algomarketing.com']
       ],
-      onAccept: `
-        gtag('consent', 'update', { 'analytics_storage': 'granted' });
-      `,
-      onDecline: `
-        gtag('consent', 'update', { 'analytics_storage': 'denied' });
-      `
+      onAccept: `gtag('consent', 'update', { 'analytics_storage': 'granted' });`,
+      onDecline: `gtag('consent', 'update', { 'analytics_storage': 'denied' });`
     },
 
     {
