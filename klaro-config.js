@@ -3,15 +3,75 @@
  * algomarketing.com + hire.algomarketing.com + new.algomarketing.com
  *
  * Cross-subdomain consent sharing via cookieDomain '.algomarketing.com'.
- * Consent Mode v2 integration via google-tag-manager service.
+ * Consent Mode v2 integration for Google services.
+ * Custom dataLayer events for non-Google services (LinkedIn, Microsoft, HubSpot, YouTube).
  *
- * v2: Fixed consent restoration for returning visitors.
- *     onInit now reads existing consent cookie and applies gtag update + klaro-*-accepted events.
+ * v3: Fixed consent restoration for returning visitors.
+ *     - IIFE at top of file runs immediately on script load (before Klaro init):
+ *       reads cookie, fires gtag updates + klaro-*-accepted events.
+ *     - Per-service onAccept/onDecline callbacks added to non-Google services
+ *       for clean new-visitor flow.
  *
  * Repo: https://github.com/pkmateur/algomarketing-cmp
  * Klaro docs: https://klaro.org/docs
  */
 
+/* ============================================================
+   CONSENT RESTORATION IIFE
+   Runs immediately when this file loads.
+   For returning visitors: applies saved consent before Klaro initializes,
+   so GTM gets the right signals from the very first event.
+   ============================================================ */
+(function restoreKlaroConsentOnLoad() {
+  try {
+    var cookieName = 'klaro-consent';
+    var cookies = document.cookie.split(';');
+    var consentCookie = null;
+    for (var i = 0; i < cookies.length; i++) {
+      var parts = cookies[i].trim().split('=');
+      if (parts[0] === cookieName) {
+        consentCookie = decodeURIComponent(parts.slice(1).join('='));
+        break;
+      }
+    }
+
+    if (!consentCookie) return; /* no saved consent — banner will show */
+
+    var savedConsents = JSON.parse(consentCookie);
+
+    window.dataLayer = window.dataLayer || [];
+    window.gtag = window.gtag || function(){ dataLayer.push(arguments); };
+
+    /* gtag('consent','update') for Google services */
+    var update = {};
+    if (savedConsents['google-analytics']) {
+      update.analytics_storage = 'granted';
+    }
+    if (savedConsents['google-ads']) {
+      update.ad_storage = 'granted';
+      update.ad_user_data = 'granted';
+      update.ad_personalization = 'granted';
+    }
+    if (Object.keys(update).length > 0) {
+      gtag('consent', 'update', update);
+    }
+
+    /* dataLayer events for non-Google services */
+    var nonGoogleServices = ['linkedin-insight', 'microsoft-ads', 'hubspot', 'youtube'];
+    for (var j = 0; j < nonGoogleServices.length; j++) {
+      var svc = nonGoogleServices[j];
+      if (savedConsents[svc]) {
+        dataLayer.push({ 'event': 'klaro-' + svc + '-accepted' });
+      }
+    }
+  } catch (e) {
+    /* Silent fail — banner will show if cookie is malformed */
+  }
+})();
+
+/* ============================================================
+   KLARO CONFIG
+   ============================================================ */
 var klaroConfig = {
   version: 1,
   elementID: 'klaro',
@@ -44,8 +104,7 @@ var klaroConfig = {
         title: 'We value your privacy',
         description:
           'We use cookies for analytics and marketing. You can accept all, decline all, or customize.',
-        learnMore: 'Customize',
-        testing: 'Testing mode!'
+        learnMore: 'Customize'
       },
       purposes: {
         functional: { title: 'Essential' },
@@ -97,9 +156,6 @@ var klaroConfig = {
     }
   },
 
-  /* ============================================================
-     SERVICES
-     ============================================================ */
   services: [
     {
       name: 'google-tag-manager',
@@ -107,10 +163,6 @@ var klaroConfig = {
       purposes: ['functional'],
       required: true,
       cookies: [],
-
-      /* onInit fires on every page load BEFORE any user interaction.
-         CRITICAL FIX v2: Also reads existing consent cookie and applies it via gtag update +
-         klaro-*-accepted events, so returning visitors don't have to re-consent. */
       onInit: `
         window.dataLayer = window.dataLayer || [];
         window.gtag = window.gtag || function(){ dataLayer.push(arguments); };
@@ -126,63 +178,6 @@ var klaroConfig = {
         });
         gtag('set', 'ads_data_redaction', true);
         gtag('set', 'url_passthrough', true);
-
-        /* Restore consent for returning visitors */
-        try {
-          var cookieName = 'klaro-consent';
-          var cookies = document.cookie.split(';');
-          var consentCookie = null;
-          for (var i = 0; i < cookies.length; i++) {
-            var parts = cookies[i].trim().split('=');
-            if (parts[0] === cookieName) {
-              consentCookie = decodeURIComponent(parts[1]);
-              break;
-            }
-          }
-          if (consentCookie) {
-            var savedConsents = JSON.parse(consentCookie);
-
-            /* Apply gtag consent update for Google services */
-            var update = {};
-            if (savedConsents['google-analytics']) {
-              update.analytics_storage = 'granted';
-            }
-            if (savedConsents['google-ads']) {
-              update.ad_storage = 'granted';
-              update.ad_user_data = 'granted';
-              update.ad_personalization = 'granted';
-            }
-            if (Object.keys(update).length > 0) {
-              gtag('consent', 'update', update);
-            }
-
-            /* Fire klaro-*-accepted events for non-Google services */
-            var nonGoogleServices = ['linkedin-insight', 'microsoft-ads', 'hubspot', 'youtube'];
-            for (var j = 0; j < nonGoogleServices.length; j++) {
-              var svc = nonGoogleServices[j];
-              if (savedConsents[svc]) {
-                dataLayer.push({ 'event': 'klaro-' + svc + '-accepted' });
-              }
-            }
-          }
-        } catch (e) {
-          /* Silent fail - if cookie is malformed, banner will show */
-        }
-      `,
-
-      onAccept: `
-        for (var k in opts.consents) {
-          if (opts.consents[k]) {
-            dataLayer.push({ 'event': 'klaro-' + k + '-accepted' });
-          }
-        }
-      `,
-      onDecline: `
-        for (var k in opts.consents) {
-          if (!opts.consents[k]) {
-            dataLayer.push({ 'event': 'klaro-' + k + '-declined' });
-          }
-        }
       `
     },
 
@@ -230,7 +225,9 @@ var klaroConfig = {
         [/^lidc$/, '/', '.linkedin.com'],
         [/^bcookie$/, '/', '.linkedin.com'],
         [/^li_.*$/, '/', '.algomarketing.com']
-      ]
+      ],
+      onAccept: `dataLayer.push({ 'event': 'klaro-linkedin-insight-accepted' });`,
+      onDecline: `dataLayer.push({ 'event': 'klaro-linkedin-insight-declined' });`
     },
 
     {
@@ -240,7 +237,9 @@ var klaroConfig = {
       cookies: [
         [/^_uet.*$/, '/', '.algomarketing.com'],
         [/^MUID$/, '/', '.bing.com']
-      ]
+      ],
+      onAccept: `dataLayer.push({ 'event': 'klaro-microsoft-ads-accepted' });`,
+      onDecline: `dataLayer.push({ 'event': 'klaro-microsoft-ads-declined' });`
     },
 
     {
@@ -252,7 +251,9 @@ var klaroConfig = {
         [/^hubspotutk$/, '/', '.algomarketing.com'],
         [/^__hssc$/, '/', '.algomarketing.com'],
         [/^__hssrc$/, '/', '.algomarketing.com']
-      ]
+      ],
+      onAccept: `dataLayer.push({ 'event': 'klaro-hubspot-accepted' });`,
+      onDecline: `dataLayer.push({ 'event': 'klaro-hubspot-declined' });`
     },
 
     {
@@ -260,7 +261,9 @@ var klaroConfig = {
       title: 'YouTube',
       purposes: ['marketing'],
       cookies: [],
-      contextualConsentOnly: true
+      contextualConsentOnly: true,
+      onAccept: `dataLayer.push({ 'event': 'klaro-youtube-accepted' });`,
+      onDecline: `dataLayer.push({ 'event': 'klaro-youtube-declined' });`
     }
   ]
 };
