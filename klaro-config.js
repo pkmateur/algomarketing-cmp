@@ -145,6 +145,10 @@ var klaroConfig = {
         title: 'Microsoft Ads (UET)',
         description: 'Conversion tracking and retargeting for our paid advertising on Bing / Microsoft.'
       },
+      microsoftClarity: {
+        title: 'Microsoft Clarity',
+        description: 'Anonymized session recordings and heatmaps that help us understand how visitors interact with the site and improve usability.'
+      },
       hubspot: {
         title: 'HubSpot',
         description: 'Visitor identification, form tracking, and marketing automation by our CRM.'
@@ -240,6 +244,21 @@ var klaroConfig = {
       ],
       onAccept: `dataLayer.push({ 'event': 'klaro-microsoft-ads-accepted' });`,
       onDecline: `dataLayer.push({ 'event': 'klaro-microsoft-ads-declined' });`
+    },
+
+    {
+      name: 'microsoft-clarity',
+      title: 'Microsoft Clarity',
+      purposes: ['analytics'],
+      cookies: [
+        [/^_clck$/, '/', '.algomarketing.com'],
+        [/^_clsk$/, '/', '.algomarketing.com'],
+        [/^CLID$/, '/', '.clarity.ms'],
+        [/^ANONCHK$/, '/', '.clarity.ms'],
+        [/^SM$/, '/', '.clarity.ms']
+      ],
+      onAccept: `dataLayer.push({ 'event': 'klaro-microsoft-clarity-accepted' });`,
+      onDecline: `dataLayer.push({ 'event': 'klaro-microsoft-clarity-declined' });`
     },
 
     {
